@@ -1,68 +1,46 @@
-# PLAN.md - Project Overview & Development Roadmap
-
-This document serves as the master blueprint for the project. It outlines the core architecture, functional requirements, and execution steps to guide AI assistants and developers throughout the development lifecycle.
-
----
-
-## 1. Project Description
-
-### Overview
-This project is an expense management and splitting application designed to help roommates track, calculate, and reconcile shared household expenses easily. The core problem it solves is the manual friction of pulling transactions from bank statements (like Chase exports) and manually calculating fair splits.
-
-### Primary Purpose
-- Import expense data via standard file exports (e.g., CSV/JSON bank records).
-- Provide a clear interface for categorizing, splitting, and filtering transactions.
-- Calculate exact balances owed between household members.
-- Export clean summaries or generate settlement links (e.g., Venmo/Zelle text summaries).
+# Project Jarvis: Personal OS & Automation Infrastructure
+**Phase 1 Architecture & Technical Implementation Plan**
 
 ---
 
-## 2. Core Features & Functional Scope
+## 1. Executive Summary
 
-### Phase 1: MVP (Minimum Viable Product)
-- **Data Ingestion:** Upload and parse bank CSV/statement exports (Chase schema primary).
-- **Expense Categorization:** Tag items as "Shared" or "Personal" and assign dynamic split ratios (e.g., 50/50, 60/40, fixed amounts).
-- **Balance Calculator:** Automatically aggregate shared totals and output individual net balances.
-- **Export & Summary:** Generate a clean line-item summary and final balance text to copy/paste.
-
-### Phase 2: Enhanced Features
-- **Recurring Expense Engine:** Auto-detect recurring monthly bills (rent, utilities, internet).
-- **Multi-User Profiles:** Support for 2+ housemates with custom split defaults.
-- **Visual Analytics:** Summary charts showing monthly household expenditure breakdowns by category.
+Project Jarvis is an event-driven, decoupled personal assistant built on a micro-spoke pattern. The primary objective of Phase 1 is to deploy a low-friction **Finance Spoke** and an **Agent Core Engine** that handle passive transaction ingestion, automated credit utilization tracking, and proactive financial triage digests delivered via Telegram.
 
 ---
 
-## 3. Tech Stack & Architecture
+## 2. Technical Stack & Dependencies
 
-- **Frontend Framework:** React (Next.js) or modern HTML/CSS/JS single-page application.
-- **Styling:** Tailwind CSS or UI component library for responsive layout.
-- **Data Parsing:** CSV parser library (e.g., PapaParse) running client-side.
-- **State Management:** Local React state / Context API (or persistent browser storage via `localStorage`).
-
----
-
-## 4. Immediate Development Roadmap
-
-1. **Setup & Boilerplate:**
-   - Initialize project repository structure.
-   - Configure build tools, linters, and baseline UI layout.
-
-2. **Parser Module:**
-   - Build a robust CSV parser tuned to standard Chase credit/checking statement headers.
-   - Create data normalizers for transaction date, description, and amount.
-
-3. **Split Calculation Logic:**
-   - Implement state management for transaction lists.
-   - Write unit functions for splitting algorithms ($50/50$, customized ratio, excluded items).
-
-4. **UI & Reconciliation View:**
-   - Create a clean transaction list view with toggleable split flags.
-   - Design a dynamic dashboard card displaying "Who owes whom how much".
+* **Language & Runtime:** Python 3.12+
+* **Framework:** FastAPI + Uvicorn (Async IO)
+* **Database & ORM:** PostgreSQL + SQLAlchemy 2.0 (Async Engine) + `asyncpg`
+* **Data Validation:** Pydantic v2
+* **AI Orchestration:** OpenAI SDK (`gpt-4o-mini` for tool execution/ingest) + Gemini API (`gemini-1.5-flash` for high-context analytical triage)
+* **Scheduler:** `APScheduler` (AsyncIOScheduler)
+* **Messaging Interface:** Telegram Bot API
+* **Infrastructure:** Docker Compose
 
 ---
 
-## 5. Instructions for AI Assistants (e.g., Claude)
+## 3. Project File Structure
 
-- **Context Awareness:** Refer to this document for overall architecture, user intent, and naming conventions before generating new code.
-- **Code Style:** Prefer modular, functional code with clear type definitions (TypeScript preferred where applicable) and minimal external dependencies.
-- **Incremental Builds:** When prompted to implement a feature, refer to the numbered steps in Section 4 and build one isolated module at a time.
+```text
+jarvis/
+├── app/
+│   ├── main.py                     # App initialization & scheduler lifecycle
+│   ├── config.py                   # Environment variables (Pydantic BaseSettings)
+│   ├── database.py                 # Async SQLAlchemy engine & session factory
+│   ├── gateway/
+│   │   └── router.py               # Inbound Webhooks (Bank alerts & Telegram router)
+│   ├── domains/
+│   │   └── finance/
+│   │       ├── models.py           # SQL Tables (CreditAccount, FinancialTransaction)
+│   │       ├── schemas.py          # Pydantic models for webhook validation
+│   │       └── service.py          # Transaction ingestion & ledger calculation logic
+│   ├── agent/
+│   │   ├── engine.py               # Tool execution loop & agent reasoning
+│   │   └── tools.py                # Read-only SQL query tools for the Agent
+│   └── jobs/
+│       └── weekly_finance_audit.py # Cron task logic for Sunday Financial Triage
+├── docker-compose.yml              # API & PostgreSQL container specification
+└── requirements.txt

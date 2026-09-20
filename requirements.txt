@@ -1,0 +1,13 @@
+# D1 (bootstrap) subset — only what app/main.py, app/config.py, and
+# app/database.py actually import/require at runtime. Later PRs (D2-D4,
+# D5/D6) extend this file with their own additional dependencies
+# (plaid-python, pyjwt, cryptography, psycopg2-binary, python-telegram-bot,
+# openai, google-generativeai) as they land. O2 (DevOps) owns the final
+# pinned version of this file.
+
+fastapi
+uvicorn[standard]
+sqlalchemy[asyncio]
+asyncpg
+pydantic
+pydantic-settings

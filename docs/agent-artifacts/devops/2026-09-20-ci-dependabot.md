@@ -10,11 +10,12 @@ depends_on: []
 
 - `.github/workflows/ci.yml` — runs on `push` and `pull_request` to
   `main`. Checks out the repo, sets up Python 3.12 (per `PLAN.md`'s
-  tech stack), installs `requirements.txt`, then runs:
+  tech stack), installs `ruff`, and installs `requirements.txt` only
+  when that file exists, then runs:
   1. `ruff check .` (no existing lint config to conflict with).
-  2. `python -c "import app.main"` as an import-sanity check, with
-     dummy values for every required field on `app.config.Settings`
-     supplied via the job's `env:` block (`DATABASE_URL`,
+  2. `python -c "import app.main"` as an import-sanity check when
+     `app/main.py` exists, with dummy values for every required field on
+     `app.config.Settings` supplied via the job's `env:` block (`DATABASE_URL`,
      `PLAID_CLIENT_ID`, `PLAID_SECRET`, `TELEGRAM_BOT_TOKEN`,
      `TELEGRAM_ALLOWED_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET_TOKEN`,
      `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `TOKEN_ENCRYPTION_KEY`,
@@ -25,7 +26,7 @@ depends_on: []
      `lifespan`, not at import time, so no database service is needed
      in this job.
 - `.github/dependabot.yml` — two ecosystems, both weekly:
-  - `pip`, directory `/` (where `requirements.txt` lives).
+  - `pip`, directory `/` (for when `requirements.txt` is added).
   - `github-actions`, directory `/` (keeps `actions/checkout`,
     `actions/setup-python`, etc. current).
 

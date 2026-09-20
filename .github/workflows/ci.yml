@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-sanity-check:
+    name: Lint & import sanity check
+    runs-on: ubuntu-latest
+
+    # Dummy values for every required field on app.config.Settings, so
+    # `python -c "import app.main"` can construct the settings singleton
+    # without touching real secrets. No test suite exists yet (D7 is a
+    # separate, not-yet-started ticket) — see the devops status note at
+    # docs/agent-artifacts/devops/2026-09-20-ci-dependabot.md for why this
+    # workflow leans on lint + import-sanity instead of pytest for now.
+    env:
+      DATABASE_URL: postgresql://user:password@localhost:5432/jarvis_ci
+      PLAID_CLIENT_ID: dummy-plaid-client-id
+      PLAID_SECRET: dummy-plaid-secret
+      TELEGRAM_BOT_TOKEN: dummy-telegram-bot-token
+      TELEGRAM_ALLOWED_CHAT_ID: "123456789"
+      TELEGRAM_WEBHOOK_SECRET_TOKEN: dummy-telegram-webhook-secret
+      ADMIN_USERNAME: dummy-admin
+      ADMIN_PASSWORD: dummy-admin-password
+      TOKEN_ENCRYPTION_KEY: dummy-token-encryption-key
+      JOBS_TRIGGER_SECRET: dummy-jobs-trigger-secret
+      OPENAI_API_KEY: dummy-openai-api-key
+      GEMINI_API_KEY: dummy-gemini-api-key
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Import sanity check
+        run: python -c "import app.main"

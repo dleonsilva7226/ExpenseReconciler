@@ -27,7 +27,30 @@ from sqlalchemy.sql import func
 from app.database import Base
 
 
-class CreditAccount(Base):
+class UUIDPrimaryKeyMixin:
+    """Shared by every model in this domain — a random UUID primary
+    key, generated app-side. Pulled out once both models below needed
+    the identical column; extend to future models (e.g. A4's
+    DigestLog) rather than re-copying it."""
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+
+
+class TimestampMixin:
+    """Shared `created_at`/`updated_at` columns — same reasoning as
+    `UUIDPrimaryKeyMixin` above."""
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class CreditAccount(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "credit_accounts"
     __table_args__ = (
         # A1 amendment 2026-09-20: one Plaid Item (bank login) can cover
@@ -36,9 +59,6 @@ class CreditAccount(Base):
         UniqueConstraint("plaid_item_id", "plaid_account_id", name="uq_credit_accounts_item_account"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
     plaid_item_id: Mapped[str | None] = mapped_column(String, nullable=True)
     plaid_account_id: Mapped[str | None] = mapped_column(String, nullable=True)
     # pgcrypto-encrypted (pgp_sym_encrypt); written/read via raw SQL,
@@ -54,24 +74,15 @@ class CreditAccount(Base):
     account_subtype: Mapped[str | None] = mapped_column(String, nullable=True)
     credit_limit: Mapped[Decimal | None] = mapped_column(Numeric(19, 4), nullable=True)
     currency_code: Mapped[str] = mapped_column(String(3), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
-    )
 
     transactions: Mapped[list[FinancialTransaction]] = relationship(
         back_populates="account"
     )
 
 
-class FinancialTransaction(Base):
+class FinancialTransaction(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "financial_transactions"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
     account_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("credit_accounts.id"), nullable=False
     )
@@ -84,11 +95,5 @@ class FinancialTransaction(Base):
     merchant_name: Mapped[str | None] = mapped_column(String, nullable=True)
     category: Mapped[str | None] = mapped_column(String, nullable=True)
     pending: Mapped[bool] = mapped_column(nullable=False, default=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
-    )
 
     account: Mapped[CreditAccount] = relationship(back_populates="transactions")

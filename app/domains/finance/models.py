@@ -11,7 +11,15 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, LargeBinary, Numeric, String, UniqueConstraint
+from sqlalchemy import (
+    Date,
+    DateTime,
+    ForeignKey,
+    LargeBinary,
+    Numeric,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -53,7 +61,7 @@ class CreditAccount(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    transactions: Mapped[list["FinancialTransaction"]] = relationship(
+    transactions: Mapped[list[FinancialTransaction]] = relationship(
         back_populates="account"
     )
 
@@ -83,4 +91,4 @@ class FinancialTransaction(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    account: Mapped["CreditAccount"] = relationship(back_populates="transactions")
+    account: Mapped[CreditAccount] = relationship(back_populates="transactions")

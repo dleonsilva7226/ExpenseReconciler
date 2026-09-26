@@ -14,9 +14,8 @@ from __future__ import annotations
 import secrets
 import uuid
 from pathlib import Path
-from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 from plaid.model.country_code import CountryCode
 from plaid.model.link_token_create_request import LinkTokenCreateRequest
@@ -30,7 +29,7 @@ from app.config import settings
 from app.database import async_session_factory
 from app.domains.finance import service as finance_service
 from app.domains.finance.schemas import PlaidWebhookPayload, TelegramUpdate
-from app.gateway.auth import require_admin
+from app.gateway.auth import AdminUser
 from app.integrations.bank.plaid_connector import (
     PlaidBankConnector,
     build_plaid_client,
@@ -109,13 +108,13 @@ async def telegram_webhook(request: Request) -> dict:
 
 
 @router.get("/link-account", response_class=HTMLResponse)
-async def link_account_page(_: Annotated[str, Depends(require_admin)]) -> HTMLResponse:
+async def link_account_page(_: AdminUser) -> HTMLResponse:
     html = (_STATIC_DIR / "link_account.html").read_text()
     return HTMLResponse(content=html)
 
 
 @router.post("/link-account/token")
-async def create_link_token(_: Annotated[str, Depends(require_admin)]) -> dict:
+async def create_link_token(_: AdminUser) -> dict:
     request_obj = LinkTokenCreateRequest(
         user=LinkTokenCreateRequestUser(client_user_id=settings.admin_username),
         client_name="ExpenseReconciler",
@@ -150,7 +149,7 @@ class LinkAccountCallbackRequest(BaseModel):
 @router.post("/link-account/callback")
 async def link_account_callback(
     body: LinkAccountCallbackRequest,
-    _: Annotated[str, Depends(require_admin)],
+    _: AdminUser,
 ) -> dict:
     if not body.accounts:
         raise HTTPException(

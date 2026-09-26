@@ -30,3 +30,9 @@ def require_admin(
             headers={"WWW-Authenticate": "Basic"},
         )
     return credentials.username
+
+
+# Reusable dependency annotation — router.py's three admin-gated
+# endpoints all repeated `Annotated[str, Depends(require_admin)]`
+# verbatim; this is FastAPI's own documented idiom for that.
+AdminUser = Annotated[str, Depends(require_admin)]

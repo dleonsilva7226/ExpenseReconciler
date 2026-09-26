@@ -1,12 +1,13 @@
-"""Gateway router (D4, per A2 + A2a): inbound webhooks and the
-account-linking UI.
+"""Gateway router (D4, per A2 + A2a; extended by D6, per A4): inbound
+webhooks, the account-linking UI, and the weekly digest job trigger.
 
 Endpoints:
-    POST /webhooks/plaid         - Plaid sync-ready notifications
-    POST /webhooks/telegram      - Telegram bot updates
-    GET  /link-account           - Plaid Link UI page (auth required)
-    POST /link-account/token     - mint a short-lived Plaid Link token (auth required)
-    POST /link-account/callback  - exchange public_token, persist the account (auth required)
+    POST /webhooks/plaid              - Plaid sync-ready notifications
+    POST /webhooks/telegram           - Telegram bot updates
+    GET  /link-account                - Plaid Link UI page (auth required)
+    POST /link-account/token          - mint a short-lived Plaid Link token (auth required)
+    POST /link-account/callback       - exchange public_token, persist the account (auth required)
+    POST /jobs/weekly-digest/trigger  - run the weekly digest job (JOBS_TRIGGER_SECRET-gated)
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from app.integrations.bank.plaid_connector import (
     build_sync_engine,
 )
 from app.integrations.bank.plaid_webhook import verify_plaid_webhook
+from app.jobs.weekly_finance_audit import run_weekly_digest
 
 router = APIRouter()
 
@@ -202,3 +204,27 @@ async def link_account_callback(
         "item_id": linked.item_id,
         "accounts_linked": len(body.accounts),
     }
+
+
+# --- Weekly digest job trigger (A4/D6) ---------------------------------------
+
+
+def _verify_jobs_trigger_secret(request: Request) -> None:
+    """Machine-to-machine auth (A4/R4): a bearer token compared via
+    `secrets.compare_digest`, distinct from A2a's admin Basic Auth -
+    this is called by an external cron service (`cron-job.org`), not a
+    browser."""
+    auth_header = request.headers.get("Authorization", "")
+    prefix = "Bearer "
+    provided = auth_header[len(prefix) :] if auth_header.startswith(prefix) else ""
+    if not secrets.compare_digest(provided, settings.jobs_trigger_secret):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid trigger secret"
+        )
+
+
+@router.post("/jobs/weekly-digest/trigger")
+async def trigger_weekly_digest(request: Request) -> dict:
+    _verify_jobs_trigger_secret(request)
+    async with async_session_factory() as session:
+        return await run_weekly_digest(session)

@@ -22,6 +22,9 @@ psycopg2-binary  # transitive: sqlalchemy's postgresql+psycopg2 dialect (plaid_c
 openai
 google-generativeai
 
+# D6 (weekly digest job) additions:
+python-telegram-bot  # async Bot.send_message, per R2's recommendation
+
 # Q1 (QA, tests/** only) additions:
 pytest
 pytest-asyncio  # app/domains/finance/service.py's ingest_transactions is async

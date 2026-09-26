@@ -97,3 +97,30 @@ class FinancialTransaction(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     pending: Mapped[bool] = mapped_column(nullable=False, default=False)
 
     account: Mapped[CreditAccount] = relationship(back_populates="transactions")
+
+
+class DigestLog(UUIDPrimaryKeyMixin, Base):
+    """Weekly-digest idempotency table (D6, per A4's "Idempotency"
+    section). A4 defines this table's columns itself — additive to
+    this domain's schema, not part of A1's original spec — so only
+    `id`/`sent_at`/`period_start`/`period_end` exist here; no
+    `TimestampMixin`, since A4 doesn't call for created/updated
+    tracking on this row.
+
+    One row is written per digest actually sent. `period_end` is
+    unique so a duplicate trigger (e.g. `cron-job.org` retrying, or a
+    manual double-trigger while testing) can't race past the
+    application-level check in `app/jobs/weekly_finance_audit.py` and
+    insert two rows for the same week — a defensive DB-level backstop
+    for the exact idempotency guarantee A4 asks for, not a schema
+    change A4 didn't authorize.
+    """
+
+    __tablename__ = "digest_logs"
+    __table_args__ = (
+        UniqueConstraint("period_end", name="uq_digest_logs_period_end"),
+    )
+
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)

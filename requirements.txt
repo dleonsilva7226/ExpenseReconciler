@@ -18,6 +18,10 @@ pyjwt
 cryptography  # transitive: PyJWT needs this for ES256 verification (plaid_webhook.py)
 psycopg2-binary  # transitive: sqlalchemy's postgresql+psycopg2 dialect (plaid_connector.py's sync engine), no direct import
 
+# D5 (agent engine) additions:
+openai
+google-generativeai
+
 # Q1 (QA, tests/** only) additions:
 pytest
 pytest-asyncio  # app/domains/finance/service.py's ingest_transactions is async

@@ -27,8 +27,8 @@ def test_link_account_page_requires_auth(client):
     assert response.status_code == 401
 
 
-def test_link_account_page_rejects_wrong_credentials(client):
-    response = client.get("/link-account", auth=("wrong", "creds"))
+def test_link_account_page_rejects_wrong_credentials(client, wrong_auth):
+    response = client.get("/link-account", auth=wrong_auth)
     assert response.status_code == 401
 
 
@@ -77,9 +77,9 @@ def test_link_account_callback_requires_auth(client):
     assert response.status_code == 401
 
 
-def test_link_account_callback_rejects_wrong_credentials(client):
+def test_link_account_callback_rejects_wrong_credentials(client, wrong_auth):
     response = client.post(
-        "/link-account/callback", json=_callback_body("acct-1"), auth=("wrong", "creds")
+        "/link-account/callback", json=_callback_body("acct-1"), auth=wrong_auth
     )
     assert response.status_code == 401
 
@@ -193,15 +193,21 @@ def _telegram_update(chat_id: int, update_id: int = 1) -> dict:
 
 
 def test_telegram_webhook_rejects_missing_secret_header(client):
-    response = client.post("/webhooks/telegram", json=_telegram_update(555000111))
+    from app.config import settings
+
+    response = client.post(
+        "/webhooks/telegram", json=_telegram_update(settings.telegram_allowed_chat_id)
+    )
     assert response.status_code == 401
 
 
-def test_telegram_webhook_rejects_wrong_secret_token(client):
+def test_telegram_webhook_rejects_wrong_secret_token(client, wrong_webhook_secret):
+    from app.config import settings
+
     response = client.post(
         "/webhooks/telegram",
-        json=_telegram_update(555000111),
-        headers={"X-Telegram-Bot-Api-Secret-Token": "wrong-secret"},
+        json=_telegram_update(settings.telegram_allowed_chat_id),
+        headers={"X-Telegram-Bot-Api-Secret-Token": wrong_webhook_secret},
     )
     assert response.status_code == 401
 
@@ -230,7 +236,9 @@ def test_telegram_webhook_wrong_chat_id_is_silently_dropped(client):
 
     response = client.post(
         "/webhooks/telegram",
-        json=_telegram_update(chat_id=999999999),
+        # Guaranteed different from the allowlisted chat id regardless
+        # of what conftest.py randomized it to this run.
+        json=_telegram_update(chat_id=settings.telegram_allowed_chat_id + 1),
         headers={"X-Telegram-Bot-Api-Secret-Token": settings.telegram_webhook_secret_token},
     )
     assert response.status_code == 200

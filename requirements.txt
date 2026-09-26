@@ -21,3 +21,9 @@ psycopg2-binary  # transitive: sqlalchemy's postgresql+psycopg2 dialect (plaid_c
 # D5 (agent engine) additions:
 openai
 google-generativeai
+
+# Q1 (QA, tests/** only) additions:
+pytest
+pytest-asyncio  # app/domains/finance/service.py's ingest_transactions is async
+pytest-mock
+httpx2  # transitive: fastapi.testclient.TestClient requires this (used in tests/gateway/test_router.py)

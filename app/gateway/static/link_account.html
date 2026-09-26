@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Link a Bank Account</title>
+    <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 32rem; margin: 3rem auto; padding: 0 1rem; }
+      button { font-size: 1rem; padding: 0.6rem 1.2rem; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <h1>Link a Bank Account</h1>
+    <button id="link-button">Link a bank account</button>
+    <p id="status"></p>
+
+    <script>
+      const statusEl = document.getElementById("status");
+
+      async function startLink() {
+        statusEl.textContent = "Requesting link token...";
+        const tokenResp = await fetch("/link-account/token", { method: "POST" });
+        if (!tokenResp.ok) {
+          statusEl.textContent = "Failed to get a link token.";
+          return;
+        }
+        const { link_token } = await tokenResp.json();
+
+        const handler = Plaid.create({
+          token: link_token,
+          onSuccess: async (public_token, metadata) => {
+            statusEl.textContent = "Linking account...";
+            const accounts = (metadata.accounts || []).map((a) => ({
+              id: a.id,
+              name: a.name,
+              mask: a.mask,
+              type: a.type,
+              subtype: a.subtype,
+            }));
+            const callbackResp = await fetch("/link-account/callback", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                public_token,
+                institution_name: metadata.institution ? metadata.institution.name : "",
+                accounts,
+              }),
+            });
+            statusEl.textContent = callbackResp.ok
+              ? "Account linked successfully."
+              : "Linking failed — check server logs.";
+          },
+          onExit: (err) => {
+            if (err) {
+              statusEl.textContent = "Link exited with an error.";
+            }
+          },
+        });
+
+        handler.open();
+      }
+
+      document.getElementById("link-button").addEventListener("click", startLink);
+    </script>
+  </body>
+</html>

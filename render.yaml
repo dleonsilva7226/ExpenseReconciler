@@ -1,0 +1,62 @@
+# Render Blueprint (O1a) — defines the ExpenseReconciler web service.
+#
+# This file declares WHICH env vars the service needs (by name only,
+# `sync: false`); it never carries real values. On first deploy from
+# this blueprint, Render's dashboard prompts for a value for each
+# `sync: false` var before the service can go live — that's the point
+# where real secrets get entered, by a human, directly into Render,
+# never through this repo. See .env.example for what each var is for,
+# and the O1a infra-note
+# (docs/agent-artifacts/devops/2026-09-27-render-neon-deploy-config.md)
+# for the full deploy writeup, including a known DATABASE_URL/Neon/
+# asyncpg caveat that affects how the DATABASE_URL value must be
+# entered.
+#
+# Deploying from this blueprint (Render dashboard -> New -> Blueprint,
+# pointing at this repo) is a provisioning action only the user can
+# take — this file is config-as-code, not an executed deploy.
+
+services:
+  - type: web
+    name: expense-reconciler
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    region: oregon
+    healthCheckPath: /health
+    envVars:
+      # Set directly (not a secret) — pins production mode explicitly
+      # rather than relying on Settings' "development" default.
+      - key: ENVIRONMENT
+        value: production
+
+      # Everything below is a reference only: `sync: false` means
+      # Render will prompt for a real value in its dashboard on first
+      # deploy and store it there, not in this file or git history.
+      - key: DATABASE_URL
+        sync: false
+      - key: PLAID_CLIENT_ID
+        sync: false
+      - key: PLAID_SECRET
+        sync: false
+      - key: PLAID_ENV
+        value: production
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_ALLOWED_CHAT_ID
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET_TOKEN
+        sync: false
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: TOKEN_ENCRYPTION_KEY
+        sync: false
+      - key: JOBS_TRIGGER_SECRET
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false

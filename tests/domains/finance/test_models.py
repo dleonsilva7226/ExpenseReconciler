@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from sqlalchemy import LargeBinary, UniqueConstraint
 
-from app.domains.finance.models import CreditAccount, FinancialTransaction
+from app.domains.finance.models import CreditAccount, DigestLog, FinancialTransaction
 
 
 def test_plaid_access_token_column_is_binary_not_plaintext():
@@ -80,3 +80,35 @@ def test_models_share_uuid_primary_key_and_timestamp_mixins():
         assert "id" in model.__table__.columns
         assert "created_at" in model.__table__.columns
         assert "updated_at" in model.__table__.columns
+
+
+# --- DigestLog (D6, per A4's "Idempotency" section) -------------------------
+
+
+def test_digest_log_period_end_has_a_unique_constraint():
+    # A4's idempotency guarantee, backstopped at the DB level (per the
+    # D6 status note) so a race between the application-level check
+    # and insert can't slip two rows past it for the same week.
+    unique_constraints = [
+        c for c in DigestLog.__table__.constraints if isinstance(c, UniqueConstraint)
+    ]
+    assert len(unique_constraints) == 1
+    constrained_columns = {col.name for col in unique_constraints[0].columns}
+    assert constrained_columns == {"period_end"}
+
+
+def test_digest_log_has_exactly_the_four_columns_a4_specifies():
+    # Deliberately no TimestampMixin (created_at/updated_at) -- A4
+    # doesn't call for it on this table; a regression adding those
+    # (or any other unplanned column) would be a silent schema drift.
+    assert set(DigestLog.__table__.columns.keys()) == {
+        "id",
+        "sent_at",
+        "period_start",
+        "period_end",
+    }
+
+
+def test_digest_log_sent_at_and_period_columns_are_not_nullable():
+    for column_name in ("sent_at", "period_start", "period_end"):
+        assert DigestLog.__table__.columns[column_name].nullable is False

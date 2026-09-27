@@ -20,7 +20,18 @@ class Base(DeclarativeBase):
     pass
 
 
-engine = create_async_engine(settings.database_url, echo=False)
+# Neon requires TLS regardless of the URL's query string, but
+# app/config.py's `_normalize_database_url` strips `sslmode`/
+# `channel_binding` from the URL (asyncpg rejects them as connect
+# kwargs) — so TLS is enforced explicitly here instead, and only when
+# the original database_url actually requested it (per
+# `settings.database_ssl`). Local dev Postgres (no sslmode in the URL)
+# is unaffected.
+_connect_args: dict[str, object] = {"ssl": True} if settings.database_ssl else {}
+
+engine = create_async_engine(
+    settings.database_url, echo=False, connect_args=_connect_args
+)
 
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 

@@ -6,10 +6,17 @@ in production, values come from Render's environment variable
 dashboard, never committed anywhere.
 """
 
-from typing import Literal
+from typing import Any, Literal
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Query params Neon's connection strings carry (`sslmode`, `channel_binding`)
+# that `psycopg2` understands but SQLAlchemy's `asyncpg` dialect passes
+# straight through to `asyncpg.connect()`, which rejects them as unknown
+# connect kwargs (see the 2026-09-27 Neon/asyncpg handoff request).
+_ASYNCPG_INCOMPATIBLE_QUERY_PARAMS = {"sslmode", "channel_binding"}
 
 
 class Settings(BaseSettings):
@@ -21,6 +28,14 @@ class Settings(BaseSettings):
 
     # Database (Neon in production, per R5)
     database_url: str
+
+    # Whether app/database.py must enforce TLS explicitly via
+    # `connect_args` instead of relying on the URL's query string.
+    # Derived automatically from the raw `database_url` below (before
+    # `_normalize_database_url` strips `sslmode`/`channel_binding` from
+    # it) — not meant to be set directly, though an explicit
+    # `DATABASE_SSL` env var can still force it if ever needed.
+    database_ssl: bool = False
 
     # Plaid (per A2, R1)
     plaid_client_id: str
@@ -46,14 +61,44 @@ class Settings(BaseSettings):
     openai_api_key: str
     gemini_api_key: str
 
+    @model_validator(mode="before")
+    @classmethod
+    def _detect_database_ssl(cls, data: Any) -> Any:
+        """Record whether the *raw* database_url requested sslmode/
+        channel_binding, before _normalize_database_url strips them."""
+        if isinstance(data, dict) and "database_ssl" not in data:
+            raw_url = data.get("database_url")
+            if isinstance(raw_url, str):
+                params = {k for k, _ in parse_qsl(urlsplit(raw_url).query)}
+                if params & _ASYNCPG_INCOMPATIBLE_QUERY_PARAMS:
+                    data["database_ssl"] = True
+        return data
+
     @field_validator("database_url")
     @classmethod
     def _normalize_database_url(cls, value: str) -> str:
         """Neon issues a plain postgresql:// URL; SQLAlchemy's async
-        engine needs the asyncpg driver scheme (A5's note for D1)."""
+        engine needs the asyncpg driver scheme (A5's note for D1).
+
+        Neon's URL also carries `sslmode`/`channel_binding` query params
+        that asyncpg rejects as unknown connect kwargs at engine-connect
+        time. Strip them once here; app/database.py enforces TLS
+        explicitly via connect_args instead, using `database_ssl` above.
+        """
         for plain_scheme in ("postgresql://", "postgres://"):
             if value.startswith(plain_scheme):
-                return "postgresql+asyncpg://" + value[len(plain_scheme) :]
+                value = "postgresql+asyncpg://" + value[len(plain_scheme) :]
+                break
+
+        if value.startswith("postgresql+asyncpg://"):
+            parts = urlsplit(value)
+            kept_params = [
+                (k, v)
+                for k, v in parse_qsl(parts.query, keep_blank_values=True)
+                if k not in _ASYNCPG_INCOMPATIBLE_QUERY_PARAMS
+            ]
+            value = urlunsplit(parts._replace(query=urlencode(kept_params)))
+
         return value
 
 

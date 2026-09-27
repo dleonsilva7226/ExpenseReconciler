@@ -245,6 +245,105 @@ def test_telegram_webhook_wrong_chat_id_is_silently_dropped(client):
     assert response.json() == {"acknowledged": True}
 
 
+# --- /jobs/weekly-digest/trigger : bearer auth + job pass-through (A4/D6) ----
+
+
+def test_trigger_weekly_digest_rejects_missing_auth_header(client):
+    response = client.post("/jobs/weekly-digest/trigger")
+    assert response.status_code == 401
+
+
+def test_trigger_weekly_digest_rejects_wrong_bearer_token(client):
+    response = client.post(
+        "/jobs/weekly-digest/trigger",
+        headers={"Authorization": "Bearer not-the-real-secret"},
+    )
+    assert response.status_code == 401
+
+
+def test_trigger_weekly_digest_rejects_non_bearer_auth_scheme(client):
+    from app.config import settings
+
+    response = client.post(
+        "/jobs/weekly-digest/trigger",
+        headers={"Authorization": f"Basic {settings.jobs_trigger_secret}"},
+    )
+    assert response.status_code == 401
+
+
+def test_trigger_weekly_digest_never_calls_the_job_on_wrong_token(
+    client, monkeypatch, fake_async_session_factory
+):
+    fake_run_weekly_digest = AsyncMock()
+    monkeypatch.setattr(router_module, "run_weekly_digest", fake_run_weekly_digest)
+    monkeypatch.setattr(router_module, "async_session_factory", fake_async_session_factory)
+
+    response = client.post(
+        "/jobs/weekly-digest/trigger",
+        headers={"Authorization": "Bearer not-the-real-secret"},
+    )
+
+    assert response.status_code == 401
+    fake_run_weekly_digest.assert_not_awaited()
+
+
+def test_trigger_weekly_digest_accepts_correct_token_and_returns_job_result(
+    client, monkeypatch, fake_async_session_factory
+):
+    from app.config import settings
+
+    fake_run_weekly_digest = AsyncMock(
+        return_value={"sent": True, "period_start": "2026-09-20", "period_end": "2026-09-27"}
+    )
+    monkeypatch.setattr(router_module, "run_weekly_digest", fake_run_weekly_digest)
+    monkeypatch.setattr(router_module, "async_session_factory", fake_async_session_factory)
+
+    response = client.post(
+        "/jobs/weekly-digest/trigger",
+        headers={"Authorization": f"Bearer {settings.jobs_trigger_secret}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "sent": True,
+        "period_start": "2026-09-20",
+        "period_end": "2026-09-27",
+    }
+    fake_run_weekly_digest.assert_awaited_once()
+
+
+def test_trigger_weekly_digest_passes_through_already_sent_response_body(
+    client, monkeypatch, fake_async_session_factory
+):
+    """The endpoint must forward the job's own `{"sent": False, ...}"`
+    body verbatim, not swallow or reshape it -- the idempotency
+    short-circuit itself is `weekly_finance_audit.py`'s job (see
+    `tests/jobs/test_weekly_finance_audit.py`); this only confirms the
+    endpoint doesn't get in the way of it."""
+    from app.config import settings
+
+    fake_run_weekly_digest = AsyncMock(
+        return_value={
+            "sent": False,
+            "reason": "digest already sent for this period",
+            "period_start": "2026-09-20",
+            "period_end": "2026-09-27",
+        }
+    )
+    monkeypatch.setattr(router_module, "run_weekly_digest", fake_run_weekly_digest)
+    monkeypatch.setattr(router_module, "async_session_factory", fake_async_session_factory)
+
+    response = client.post(
+        "/jobs/weekly-digest/trigger",
+        headers={"Authorization": f"Bearer {settings.jobs_trigger_secret}"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sent"] is False
+    assert body["reason"] == "digest already sent for this period"
+
+
 def test_telegram_webhook_update_with_no_message_does_not_crash(client):
     """e.g. an edited_message/channel_post-only update -- `message` is
     optional in `TelegramUpdate`; the allowlist check must not raise

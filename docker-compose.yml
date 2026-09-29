@@ -1,0 +1,65 @@
+# docker-compose.yml — local development only (O1).
+#
+# NOT used in production. Per the R5/hosting decision (see
+# docs/agent-artifacts/manager/2026-09-20-hosting-decision.md), the
+# real deployment target is Render (compute, via the repo's Dockerfile
+# + render.yaml) + Neon (managed Postgres) — neither of which involves
+# this file. This exists solely so you can run the API + a local
+# Postgres on your own machine and hit it before ever touching Render.
+#
+# Quick-start: see the "Local development" section in README.md, or
+# the fuller writeup at
+# docs/agent-artifacts/devops/2026-09-28-local-docker-compose.md.
+#
+# NOT verified with an actual `docker-compose up` in this sandbox (no
+# running Docker daemon available here) — hand-checked for YAML syntax
+# and cross-checked against app/config.py, Dockerfile, and .env.example
+# only. Run it yourself and report back if something's off.
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      # Local-only throwaway credentials for a container-local dev
+      # Postgres — not a real secret, has no validity outside this
+      # compose network. Deliberately obvious placeholder values
+      # rather than anything resembling a real password.
+      POSTGRES_USER: localdev
+      POSTGRES_PASSWORD: localdev
+      POSTGRES_DB: jarvis_local
+    ports:
+      # Exposed on the host so you can `psql` in directly if you want
+      # to poke at the local DB. Not required for the api service,
+      # which talks to `db` over the compose-internal network instead.
+      - "5432:5432"
+    volumes:
+      - jarvis_local_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U localdev -d jarvis_local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    # All app config comes from your local .env file (copy
+    # .env.example -> .env first) — nothing app-specific is hardcoded
+    # here. Your .env's DATABASE_URL should point at the `db` service
+    # above by its compose network hostname; see README.md's "Local
+    # development" section for the exact value to use.
+    env_file:
+      - .env
+    ports:
+      # Matches the Dockerfile's CMD, which binds uvicorn to
+      # 0.0.0.0:${PORT} with PORT defaulting to 8000.
+      - "8000:8000"
+
+volumes:
+  jarvis_local_db_data:

@@ -23,3 +23,5 @@ Implementation and Developer validation complete; ready for Manager-routed indep
 - Warnings are existing Gemini SDK deprecation and Starlette 422 constant deprecation; no new dependency/signing-secret/infra/env/schema change.
 
 No deviations from approved spec. Browser visual/interactive verification remains for QA with installed Chromium and mocked Plaid/backend only. Developer did not contact live Plaid, Telegram or LLM, merge, deploy, push, or publish a PR. Manager must review independent QA before publication. Stateless logout deletes this browser cookie; it does not revoke a copied token globally.
+
+Baseline regression detail: full run includes all 46 existing Telegram/weekly-digest tests: `tests/gateway/test_d7_flow_qa.py` (19), `tests/gateway/test_telegram_interactive.py` (12), `tests/jobs/test_weekly_finance_audit.py` (15). No assertions or test files in these groups were changed.

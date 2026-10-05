@@ -12,6 +12,8 @@ Endpoints:
 
 from __future__ import annotations
 
+import json
+import logging
 import secrets
 import uuid
 from pathlib import Path
@@ -22,10 +24,12 @@ from plaid.model.country_code import CountryCode
 from plaid.model.link_token_create_request import LinkTokenCreateRequest
 from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
 from plaid.model.products import Products
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import text
 from starlette.concurrency import run_in_threadpool
+from telegram import Bot
 
+from app.agent.engine import run_interactive_query
 from app.config import settings
 from app.database import async_session_factory
 from app.domains.finance import service as finance_service
@@ -40,6 +44,7 @@ from app.integrations.bank.plaid_webhook import verify_plaid_webhook
 from app.jobs.weekly_finance_audit import run_weekly_digest
 
 router = APIRouter()
+_logger = logging.getLogger(__name__)
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -84,24 +89,78 @@ async def plaid_webhook(request: Request, background_tasks: BackgroundTasks) -> 
 # --- Telegram webhook -------------------------------------------------------
 
 
+_TELEGRAM_MAX_UNITS = 4096
+_TRUNCATION_SUFFIX = "\n\n[truncated]"
+_TELEGRAM_HELP = (
+    "Ask me a finance question in a text message. "
+    "Use /start or /help for this guidance."
+)
+_AGENT_ERROR_REPLY = "I couldn't answer that right now. Please try again later."
+
+
+def _fit_telegram_reply(text: str) -> str:
+    """Bound plain text conservatively in UTF-16 units, including emoji."""
+    encoded = text.encode("utf-16-le")
+    if len(encoded) <= _TELEGRAM_MAX_UNITS * 2:
+        return text
+    budget = _TELEGRAM_MAX_UNITS - len(_TRUNCATION_SUFFIX)
+    # Dropping an incomplete surrogate pair preserves valid Unicode.
+    return encoded[: budget * 2].decode("utf-16-le", errors="ignore") + _TRUNCATION_SUFFIX
+
+
+async def _reply_to_telegram(chat_id: int, user_text: str) -> None:
+    """Run after acknowledgment; failures never provoke webhook retries.
+
+    No conversational state or weekly-digest trigger is introduced.
+    Avoid logging exception details: provider/HTTP exceptions can carry
+    financial text or Bot API URLs containing the token.
+    """
+    if user_text.startswith("/"):
+        command = user_text.split(maxsplit=1)[0]
+        if command in {"/start", "/help"}:
+            reply = _TELEGRAM_HELP
+        else:
+            reply = "Unknown command. " + _TELEGRAM_HELP
+    else:
+        try:
+            reply = await run_interactive_query(user_text)
+            if not reply.strip():
+                reply = "I couldn't find an answer. Please try rephrasing your question."
+        except Exception:  # noqa: BLE001 - contain provider failures after acknowledgment
+            _logger.warning("Telegram interactive query failed")
+            reply = _AGENT_ERROR_REPLY
+
+    try:
+        async with Bot(token=settings.telegram_bot_token) as bot:
+            await bot.send_message(chat_id=chat_id, text=_fit_telegram_reply(reply), parse_mode=None)
+    except Exception:  # noqa: BLE001 - Telegram failures must not trigger duplicate LLM calls
+        _logger.warning("Telegram interactive reply delivery failed")
+
+
 @router.post("/webhooks/telegram", status_code=status.HTTP_200_OK)
-async def telegram_webhook(request: Request) -> dict:
+async def telegram_webhook(request: Request, background_tasks: BackgroundTasks) -> dict:
     secret_header = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-    if not secrets.compare_digest(secret_header, settings.telegram_webhook_secret_token):
+    if not settings.telegram_webhook_secret_token or not secrets.compare_digest(
+        secret_header, settings.telegram_webhook_secret_token
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook secret"
         )
 
-    body = await request.json()
-    update = TelegramUpdate.model_validate(body)
+    try:
+        update = TelegramUpdate.model_validate_json(await request.body())
+    except (ValidationError, json.JSONDecodeError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid Telegram update"
+        ) from None
 
     if update.message is None or update.message.chat.id != settings.telegram_allowed_chat_id:
         # Chat-ID allowlist (A2): silently drop anything not from you.
         return {"acknowledged": True}
 
-    # Dispatch to app/agent/engine.py is A3/D5's contract, not built
-    # yet (A2 explicitly scopes that out of this ticket). Intentional
-    # no-op placeholder until D5 lands — see the D1-D4 status note.
+    user_text = (update.message.text or "").strip()
+    if user_text:
+        background_tasks.add_task(_reply_to_telegram, update.message.chat.id, user_text)
 
     return {"acknowledged": True}
 

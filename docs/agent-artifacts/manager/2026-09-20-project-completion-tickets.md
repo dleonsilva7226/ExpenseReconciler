@@ -111,10 +111,24 @@ Each implements against one `approved` Architect spec, writes a
 - **D4 — Gateway. MERGED.** `app/gateway/router.py`, `auth.py`,
   `static/link_account.html`, `app/integrations/bank/**`. Depends on A2, A2a.
   This closes out the original D1-D4 sequence.
-- **D5 — Agent engine.** `app/agent/engine.py`, `app/agent/tools.py`.
-  Depends on A3. Not yet authorized by the user to build.
-- **D6 — Weekly audit job.** `app/jobs/weekly_finance_audit.py`.
-  Depends on A4. Not yet authorized by the user to build.
+- **D5 — Agent engine. MERGED (2026-09-27).** `app/agent/providers/**`,
+  `app/agent/tools.py`, `app/agent/engine.py`. Depends on A3. PR:
+  `dev/d5-agent-engine`.
+- **D6 — Weekly audit job. MERGED (2026-09-27).** `app/domains/finance/models.py`
+  (`DigestLog`), `app/jobs/weekly_finance_audit.py`, `app/gateway/router.py`
+  (`POST /jobs/weekly-digest/trigger`). Depends on A4 and D5. PR:
+  `dev/d6-weekly-digest`. This closes the D5/D6/Q1 sequence the user
+  explicitly requested on 2026-09-26.
+- **D7 — Telegram interactive message/reply handling. TICKET ADDED
+  (2026-10-04).** Complete the existing `POST /webhooks/telegram` path:
+  dispatch allowlisted text messages to `agent.engine.run_interactive_query`
+  and send the result back to the same Telegram chat using the Bot API.
+  Preserve webhook-secret and chat-ID checks; define behavior for commands,
+  non-text updates, and agent/API errors; ensure replies fit Telegram's
+  message limit. The approved A2/A3 contracts cover the webhook and engine
+  interfaces. Requires the user's explicit build command under Section 2.3
+  before Developer implementation. After implementation, QA should verify
+  the webhook-to-agent-to-reply flow with mocked Telegram/LLM calls.
 - **D-refactor — Code quality pass. Rounds 1-3 (D1+D2, D3, D4) done.**
   Once each ticket PR merges, a follow-up PR reviews the newly-merged
   code for duplication/DRY-ness and confirms `ruff check .` passes
@@ -133,11 +147,28 @@ QA can test against any already-merged or approved-spec code as soon as
 the Manager delegates it, without needing its own separate user build
 command.
 
-- **Q1 — Test suite for D1-D4.** Coverage for what's currently merged:
-  `app/main.py`/`config.py`/`database.py` (D1), finance models/schemas
-  (D2), finance service ingestion/upsert logic (D3), gateway webhook
-  endpoints + Plaid connector (D4). Not yet authorized by the user to
-  start.
+- **Q1 — Test suite for D1-D4. MERGED (2026-09-27).** Coverage for what's
+  currently merged: `app/main.py`/`config.py`/`database.py` (D1), finance
+  models/schemas (D2), finance service ingestion/upsert logic (D3),
+  gateway webhook endpoints + Plaid connector (D4). 47/47 tests passing,
+  no bugs found. PR: `qa/d1-d4-tests`.
+- **QA-refactor — fix false-positive secret-scanner findings. MERGED
+  (2026-09-27).** GitGuardian flagged static credential-shaped dummy
+  values in `tests/conftest.py`/`test_router.py` (not real secrets).
+  PR `qa/fix-secret-scan-fixtures` replaced them with runtime-generated
+  random values to stop future PRs tripping the same finding. Does not
+  retroactively clear the already-flagged historical commits — those
+  still need to be dismissed as false positives directly in
+  GitGuardian's dashboard.
+- **Q2 — Test suite for D5/D6. MERGED (2026-09-27).** Coverage for the
+  agent engine and weekly digest job: idempotency short-circuit,
+  trigger-endpoint auth, tool-call loop edge cases, both provider
+  adapters, `DigestLog` constraints. 107/107 tests passing (47
+  pre-existing + 60 new), no bugs found. PR: `qa/d5-d6-tests`.
+- **D-refactor round 4 (D5+D6). DONE — nothing to do (2026-09-27).**
+  Reviewed the OpenAI/Gemini adapter divergence, the tool-call loop,
+  and job/service overlap; all intentional, not duplication. No
+  branch/PR created, same honest outcome as round 2 (D3).
 
 ## DevOps tickets
 

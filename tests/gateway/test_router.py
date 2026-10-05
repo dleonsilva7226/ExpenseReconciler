@@ -212,8 +212,11 @@ def test_telegram_webhook_rejects_wrong_secret_token(client, wrong_webhook_secre
     assert response.status_code == 401
 
 
-def test_telegram_webhook_right_chat_id_is_processed(client):
+def test_telegram_webhook_right_chat_id_is_processed(client, monkeypatch):
     from app.config import settings
+
+    dispatch = AsyncMock()
+    monkeypatch.setattr(router_module, "_reply_to_telegram", dispatch)
 
     response = client.post(
         "/webhooks/telegram",
@@ -222,17 +225,17 @@ def test_telegram_webhook_right_chat_id_is_processed(client):
     )
     assert response.status_code == 200
     assert response.json() == {"acknowledged": True}
+    dispatch.assert_awaited_once_with(settings.telegram_allowed_chat_id, "/status")
 
 
-def test_telegram_webhook_wrong_chat_id_is_silently_dropped(client):
+def test_telegram_webhook_wrong_chat_id_is_silently_dropped(client, monkeypatch):
     """Per A2's authorization model: a valid, correctly-signed request
     from any chat other than the allowlisted one still gets a 200 ack
-    (so Telegram doesn't retry it), it's just not acted on. Dispatch to
-    the agent (A3/D5) isn't built yet, so there's no further observable
-    side effect to assert on beyond "doesn't error and doesn't 401" --
-    this guards the allowlist-check branch itself, which does exist in
-    the merged code."""
+    (so Telegram doesn't retry it), it's just not acted on. Dispatch must not run for the other chat."""
     from app.config import settings
+
+    dispatch = AsyncMock()
+    monkeypatch.setattr(router_module, "_reply_to_telegram", dispatch)
 
     response = client.post(
         "/webhooks/telegram",
@@ -243,6 +246,7 @@ def test_telegram_webhook_wrong_chat_id_is_silently_dropped(client):
     )
     assert response.status_code == 200
     assert response.json() == {"acknowledged": True}
+    dispatch.assert_not_awaited()
 
 
 # --- /jobs/weekly-digest/trigger : bearer auth + job pass-through (A4/D6) ----

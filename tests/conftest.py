@@ -58,12 +58,22 @@ import pytest
 
 @pytest.fixture
 def admin_auth() -> tuple[str, str]:
-    """(username, password) matching this test session's env -- pass as
-    `auth=admin_auth` to TestClient calls against Basic-Auth-gated
-    routes."""
+    """Current Jarvis credentials for session creation and Basic-only rejection checks."""
     from app.config import settings
 
     return (settings.admin_username, settings.admin_password)
+
+
+@pytest.fixture
+def admin_session(client, admin_auth):
+    """Verify browser access and return same-origin/CSRF mutation headers."""
+    response = client.post(
+        "/link-account/session",
+        json={"username": admin_auth[0], "password": admin_auth[1]},
+        headers={"Origin": "http://localhost"},
+    )
+    assert response.status_code == 200
+    return {"Origin": "http://localhost", "X-CSRF-Token": response.json()["csrf_token"]}
 
 
 @pytest.fixture
@@ -104,7 +114,7 @@ def client():
 
     import app.main as main_module
 
-    return TestClient(main_module.app)
+    return TestClient(main_module.app, base_url="http://localhost")
 
 
 class FakeAsyncSession:

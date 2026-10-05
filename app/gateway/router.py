@@ -4,9 +4,13 @@ webhooks, the account-linking UI, and the weekly digest job trigger.
 Endpoints:
     POST /webhooks/plaid              - Plaid sync-ready notifications
     POST /webhooks/telegram           - Telegram bot updates
-    GET  /link-account                - Plaid Link UI page (auth required)
-    POST /link-account/token          - mint a short-lived Plaid Link token (auth required)
-    POST /link-account/callback       - exchange public_token, persist the account (auth required)
+    GET  /link-account                - public verification/connect page
+    GET  /link-account/assets/*       - two public CSS/JS assets
+    GET  /link-account/session        - current browser verification status
+    POST /link-account/session        - verify admin access, create browser session
+    POST /link-account/logout         - delete browser session cookie
+    POST /link-account/token          - mint a Plaid Link token (session protected)
+    POST /link-account/callback       - exchange public_token, persist accounts (protected)
     POST /jobs/weekly-digest/trigger  - run the weekly digest job (JOBS_TRIGGER_SECRET-gated)
 """
 
@@ -18,23 +22,47 @@ import secrets
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
-from fastapi.responses import HTMLResponse
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.routing import APIRoute
+from plaid.exceptions import ApiException
 from plaid.model.country_code import CountryCode
 from plaid.model.link_token_create_request import LinkTokenCreateRequest
 from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
 from plaid.model.products import Products
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 from telegram import Bot
+from urllib3.exceptions import HTTPError as ProviderHTTPError
 
 from app.agent.engine import run_interactive_query
 from app.config import settings
 from app.database import async_session_factory
 from app.domains.finance import service as finance_service
 from app.domains.finance.schemas import PlaidWebhookPayload, TelegramUpdate
-from app.gateway.auth import AdminUser
+from app.gateway.auth import (
+    COOKIE_NAME,
+    AdminUser,
+    clear_session_cookie,
+    create_session,
+    credentials_match,
+    decode_session,
+    require_login_request,
+    require_transport,
+    session_status,
+    set_session_cookie,
+)
 from app.integrations.bank.plaid_connector import (
     PlaidBankConnector,
     build_plaid_client,
@@ -43,7 +71,33 @@ from app.integrations.bank.plaid_connector import (
 from app.integrations.bank.plaid_webhook import verify_plaid_webhook
 from app.jobs.weekly_finance_audit import run_weekly_digest
 
-router = APIRouter()
+
+class BrowserResponseRoute(APIRoute):
+    """Never cache browser responses, including validation/auth failures."""
+
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def browser_handler(request: Request):
+            if not request.url.path.startswith("/link-account"):
+                return await handler(request)
+            try:
+                response = await handler(request)
+            except HTTPException as exc:
+                exc.headers = {**(exc.headers or {}), "Cache-Control": "no-store"}
+                raise
+            except RequestValidationError:
+                # FastAPI validation payloads can echo submitted passwords.
+                response = JSONResponse(
+                    {"detail": "Please check the submitted fields."}, status_code=422
+                )
+            response.headers["Cache-Control"] = "no-store"
+            return response
+
+        return browser_handler
+
+
+router = APIRouter(route_class=BrowserResponseRoute)
 _logger = logging.getLogger(__name__)
 
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -51,7 +105,9 @@ _STATIC_DIR = Path(__file__).parent / "static"
 # Built once at module import (process startup), reused across requests.
 _plaid_client = build_plaid_client(settings)
 _sync_engine = build_sync_engine(settings)
-_bank_connector = PlaidBankConnector(_plaid_client, _sync_engine, settings.token_encryption_key)
+_bank_connector = PlaidBankConnector(
+    _plaid_client, _sync_engine, settings.token_encryption_key
+)
 
 
 # --- Plaid webhook ---------------------------------------------------------
@@ -105,7 +161,9 @@ def _fit_telegram_reply(text: str) -> str:
         return text
     budget = _TELEGRAM_MAX_UNITS - len(_TRUNCATION_SUFFIX)
     # Dropping an incomplete surrogate pair preserves valid Unicode.
-    return encoded[: budget * 2].decode("utf-16-le", errors="ignore") + _TRUNCATION_SUFFIX
+    return (
+        encoded[: budget * 2].decode("utf-16-le", errors="ignore") + _TRUNCATION_SUFFIX
+    )
 
 
 async def _reply_to_telegram(chat_id: int, user_text: str) -> None:
@@ -125,14 +183,18 @@ async def _reply_to_telegram(chat_id: int, user_text: str) -> None:
         try:
             reply = await run_interactive_query(user_text)
             if not reply.strip():
-                reply = "I couldn't find an answer. Please try rephrasing your question."
+                reply = (
+                    "I couldn't find an answer. Please try rephrasing your question."
+                )
         except Exception:  # noqa: BLE001 - contain provider failures after acknowledgment
             _logger.warning("Telegram interactive query failed")
             reply = _AGENT_ERROR_REPLY
 
     try:
         async with Bot(token=settings.telegram_bot_token) as bot:
-            await bot.send_message(chat_id=chat_id, text=_fit_telegram_reply(reply), parse_mode=None)
+            await bot.send_message(
+                chat_id=chat_id, text=_fit_telegram_reply(reply), parse_mode=None
+            )
     except Exception:  # noqa: BLE001 - Telegram failures must not trigger duplicate LLM calls
         _logger.warning("Telegram interactive reply delivery failed")
 
@@ -151,10 +213,14 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks) 
         update = TelegramUpdate.model_validate_json(await request.body())
     except (ValidationError, json.JSONDecodeError):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid Telegram update"
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid Telegram update",
         ) from None
 
-    if update.message is None or update.message.chat.id != settings.telegram_allowed_chat_id:
+    if (
+        update.message is None
+        or update.message.chat.id != settings.telegram_allowed_chat_id
+    ):
         # Chat-ID allowlist (A2): silently drop anything not from you.
         return {"acknowledged": True}
 
@@ -169,9 +235,55 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks) 
 
 
 @router.get("/link-account", response_class=HTMLResponse)
-async def link_account_page(_: AdminUser) -> HTMLResponse:
+async def link_account_page() -> HTMLResponse:
     html = (_STATIC_DIR / "link_account.html").read_text()
-    return HTMLResponse(content=html)
+    return HTMLResponse(content=html, headers={"Referrer-Policy": "no-referrer"})
+
+
+@router.get("/link-account/assets/link_account.css")
+async def link_account_css() -> FileResponse:
+    return FileResponse(_STATIC_DIR / "link_account.css", media_type="text/css")
+
+
+@router.get("/link-account/assets/link_account.js")
+async def link_account_js() -> FileResponse:
+    return FileResponse(
+        _STATIC_DIR / "link_account.js", media_type="application/javascript"
+    )
+
+
+class VerificationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str = Field(min_length=1, max_length=256)
+    password: str = Field(min_length=1, max_length=1024)
+
+
+@router.get("/link-account/session")
+async def get_browser_session(request: Request, response: Response) -> dict:
+    require_transport(request)
+    claims = decode_session(request.cookies.get(COOKIE_NAME))
+    if claims is None:
+        if COOKIE_NAME in request.cookies:
+            clear_session_cookie(response, request)
+        return {"authenticated": False}
+    return session_status(claims)
+
+
+@router.post("/link-account/session", dependencies=[Depends(require_login_request)])
+async def verify_access(
+    body: VerificationRequest, request: Request, response: Response
+) -> dict:
+    if not credentials_match(body.username, body.password):
+        raise HTTPException(401, "We couldn't verify those details. Please try again.")
+    token, claims = create_session()
+    set_session_cookie(response, request, token)
+    return session_status(claims)
+
+
+@router.post("/link-account/logout")
+async def sign_out(request: Request, response: Response, _: AdminUser) -> dict:
+    clear_session_cookie(response, request)
+    return {"authenticated": False}
 
 
 @router.post("/link-account/token")
@@ -183,7 +295,13 @@ async def create_link_token(_: AdminUser) -> dict:
         country_codes=[CountryCode("US")],
         language="en",
     )
-    response = await run_in_threadpool(_plaid_client.link_token_create, request_obj)
+    try:
+        response = await run_in_threadpool(_plaid_client.link_token_create, request_obj)
+    except (ApiException, ProviderHTTPError) as exc:
+        _logger.warning("Plaid link token creation failed (%s)", type(exc).__name__)
+        raise HTTPException(
+            502, "We couldn't connect to your bank. Please try again."
+        ) from None
     return {"link_token": response.link_token}
 
 
@@ -218,45 +336,63 @@ async def link_account_callback(
             detail="No accounts returned by Plaid Link",
         )
 
-    linked = await run_in_threadpool(_bank_connector.exchange_public_token, body.public_token)
+    try:
+        linked = await run_in_threadpool(
+            _bank_connector.exchange_public_token, body.public_token
+        )
+    except (ApiException, ProviderHTTPError) as exc:
+        _logger.warning("Plaid token exchange failed (%s)", type(exc).__name__)
+        raise HTTPException(
+            502, "We couldn't connect to your bank. Please try again."
+        ) from None
 
     # A1 amendment 2026-09-20 ("Item vs. account identity"): one Plaid
     # Item can cover multiple accounts (e.g. checking + credit card at
     # the same bank) — insert one credit_accounts row per account
     # returned by Link, all sharing item_id/institution_name/token but
     # each with its own plaid_account_id.
-    async with async_session_factory() as session:
-        for account in body.accounts:
-            await session.execute(
-                text(
-                    "INSERT INTO credit_accounts "
-                    "(id, plaid_item_id, plaid_account_id, plaid_access_token_encrypted, "
-                    " institution_name, account_name, account_mask, account_type, "
-                    " account_subtype, currency_code) "
-                    "VALUES (:id, :item_id, :account_id, pgp_sym_encrypt(:token, :key), "
-                    " :institution_name, :account_name, :account_mask, :account_type, "
-                    " :account_subtype, :currency_code)"
-                ),
-                {
-                    "id": str(uuid.uuid4()),
-                    "item_id": linked.item_id,
-                    "account_id": account.id,
-                    "token": linked.access_token,
-                    "key": settings.token_encryption_key,
-                    "institution_name": body.institution_name,
-                    "account_name": account.name,
-                    # ASSUMPTION (status note): mask/type default to
-                    # placeholders if Plaid Link's metadata omits them;
-                    # currency_code is hardcoded USD — reasonable for
-                    # personal US bank accounts, not derived from a real
-                    # Plaid /accounts/get call yet.
-                    "account_mask": account.mask or "",
-                    "account_type": account.type or "unknown",
-                    "account_subtype": account.subtype,
-                    "currency_code": "USD",
-                },
-            )
-        await session.commit()
+    try:
+        async with async_session_factory() as session:
+            try:
+                for account in body.accounts:
+                    await session.execute(
+                        text(
+                            "INSERT INTO credit_accounts "
+                            "(id, plaid_item_id, plaid_account_id, plaid_access_token_encrypted, "
+                            " institution_name, account_name, account_mask, account_type, "
+                            " account_subtype, currency_code) "
+                            "VALUES (:id, :item_id, :account_id, pgp_sym_encrypt(:token, :key), "
+                            " :institution_name, :account_name, :account_mask, :account_type, "
+                            " :account_subtype, :currency_code)"
+                        ),
+                        {
+                            "id": str(uuid.uuid4()),
+                            "item_id": linked.item_id,
+                            "account_id": account.id,
+                            "token": linked.access_token,
+                            "key": settings.token_encryption_key,
+                            "institution_name": body.institution_name,
+                            "account_name": account.name,
+                            # ASSUMPTION (status note): mask/type default to
+                            # placeholders if Plaid Link's metadata omits them;
+                            # currency_code is hardcoded USD — reasonable for
+                            # personal US bank accounts, not derived from a real
+                            # Plaid /accounts/get call yet.
+                            "account_mask": account.mask or "",
+                            "account_type": account.type or "unknown",
+                            "account_subtype": account.subtype,
+                            "currency_code": "USD",
+                        },
+                    )
+                await session.commit()
+            except SQLAlchemyError:
+                await session.rollback()
+                raise
+    except SQLAlchemyError as exc:
+        _logger.warning("Bank account persistence failed (%s)", type(exc).__name__)
+        raise HTTPException(
+            500, "We couldn't save your account. Please try again."
+        ) from None
 
     return {
         "linked": True,
@@ -270,7 +406,7 @@ async def link_account_callback(
 
 def _verify_jobs_trigger_secret(request: Request) -> None:
     """Machine-to-machine auth (A4/R4): a bearer token compared via
-    `secrets.compare_digest`, distinct from A2a's admin Basic Auth -
+    `secrets.compare_digest`, distinct from browser session verification -
     this is called by an external cron service (`cron-job.org`), not a
     browser."""
     auth_header = request.headers.get("Authorization", "")

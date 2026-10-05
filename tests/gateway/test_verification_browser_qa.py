@@ -3,10 +3,14 @@
 The app's actual HTML/CSS/JS, routes, sessions, request guards and callback
 transaction execute. Only Plaid's CDN/provider and the database boundary are
 mocked. No browser test dependency is added to application requirements.
+Set PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH to select a browser explicitly;
+otherwise use Chromium/Chrome on PATH or Playwright's installed Chromium.
 """
 
 from __future__ import annotations
 
+import os
+import shutil
 import socket
 import threading
 import time
@@ -78,7 +82,13 @@ def browser_app(monkeypatch, fake_async_session):
 def page(browser_app):
     base_url, _ = browser_app
     with playwright.sync_playwright() as runner:
-        browser = runner.chromium.launch(executable_path="/usr/bin/chromium", args=["--no-sandbox", "--disable-dev-shm-usage"])
+        executable = (
+            os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH")
+            or shutil.which("chromium")
+            or shutil.which("chromium-browser")
+            or shutil.which("google-chrome")
+        )
+        browser = runner.chromium.launch(executable_path=executable, args=["--no-sandbox", "--disable-dev-shm-usage"])
         context = browser.new_context(viewport={"width": 1280, "height": 900})
         browser_page = context.new_page()
         errors = []
@@ -237,9 +247,9 @@ def test_callback_persistence_error_never_shows_success(page):
     expect(page.locator("#connect-button")).to_be_enabled()
 
 
-def test_mobile_layout_accessible_focus_and_clean_screenshots(page):
-    output = Path("/workspace/verification-qa-artifacts")
-    output.mkdir(exist_ok=True)
+def test_mobile_layout_accessible_focus_and_clean_screenshots(page, tmp_path: Path):
+    output = tmp_path / "verification-screenshots"
+    output.mkdir()
     page.screenshot(path=str(output / "verify-desktop.png"), full_page=True)
     for width in [320, 390]:
         page.set_viewport_size({"width": width, "height": 844})
@@ -256,3 +266,5 @@ def test_mobile_layout_accessible_focus_and_clean_screenshots(page):
     page.screenshot(path=str(output / "connect-mobile.png"), full_page=True)
     page.set_viewport_size({"width": 1280, "height": 900})
     page.screenshot(path=str(output / "connect-desktop.png"), full_page=True)
+    for name in ("verify-desktop.png", "verify-mobile.png", "connect-mobile.png", "connect-desktop.png"):
+        assert (output / name).read_bytes().startswith(b"\x89PNG\r\n\x1a\n")

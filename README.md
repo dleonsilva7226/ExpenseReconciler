@@ -38,16 +38,19 @@ those code paths actually run), not at startup. Concretely:
   actual Telegram chat ID to let the app start. The placeholder text
   in `.env.example` (`your-telegram-chat-id-here`) will fail startup
   validation — replace it with any numeric value, e.g. `0`.
-- **`ADMIN_USERNAME`/`ADMIN_PASSWORD`** — any values work; these gate
-  the `/link-account` admin UI via HTTP Basic Auth, not an external
-  service.
+- **`ADMIN_USERNAME`/`ADMIN_PASSWORD`** — choose your own Jarvis access
+  details; enter them in the public `/link-account` verification form.
+  Successful verification creates a signed 15-minute browser session
+  that protects the Plaid linking endpoints. These are not your bank
+  credentials; those are entered inside Plaid.
 - **`TOKEN_ENCRYPTION_KEY`**, **`TELEGRAM_WEBHOOK_SECRET_TOKEN`**,
   **`JOBS_TRIGGER_SECRET`** — any non-empty string works to let the
   app start; the app doesn't validate these against anything external.
-  Use real generated values (`openssl rand -base64 32` /
-  `openssl rand -hex 32`) if you plan to actually exercise pgcrypto
-  encryption or hit the webhook/job-trigger endpoints with a matching
-  header.
+  Use a strong generated `TOKEN_ENCRYPTION_KEY` (`openssl rand -base64 32`)
+  for verification or bank linking: it encrypts Plaid tokens and derives
+  a separate, domain-specific session-signing key bound to the current
+  admin credentials. Use generated webhook/job secrets (`openssl rand
+  -hex 32`) when exercising their endpoints with matching headers.
 - **`PLAID_CLIENT_ID`/`PLAID_SECRET`**, **`TELEGRAM_BOT_TOKEN`**,
   **`OPENAI_API_KEY`**, **`GEMINI_API_KEY`** — placeholder text is
   fine for the server to *start* and for non-Plaid/non-agent endpoints
@@ -81,9 +84,18 @@ curl http://localhost:8000/health
 
 That endpoint has no dependencies beyond a running app process, so
 it's the right first check that the stack came up correctly. The
-admin UI is at `http://localhost:8000/link-account` (HTTP Basic Auth,
-`ADMIN_USERNAME`/`ADMIN_PASSWORD` from your `.env`) — linking an
-actual account through it needs real Plaid sandbox credentials.
+Jarvis verification page is at `http://localhost:8000/link-account`.
+Enter `ADMIN_USERNAME`/`ADMIN_PASSWORD` from your `.env`, select
+**Connect bank account**, and complete Plaid's flow. Connecting an actual
+account needs real Plaid sandbox credentials. Verification expires after
+15 minutes; verify again to continue, or select **Sign out** to clear this
+browser's session.
+
+Local HTTP verification works only with `ENVIRONMENT=development` and
+a loopback URL (`localhost`, `127.0.0.1`, or `::1`). Production requires
+HTTPS for session and protected Plaid requests. Render's TLS proxy is
+configured through `render.yaml` and the `Dockerfile`; keep that proxy
+configuration when deploying so the app recognizes HTTPS.
 
 ### 4. Bring it down / reset the local DB
 

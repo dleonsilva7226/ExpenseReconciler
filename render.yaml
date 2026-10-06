@@ -31,6 +31,14 @@ services:
       - key: ENVIRONMENT
         value: production
 
+      # TLS terminates at Render's managed ingress, outside loopback.
+      # Only this Render free web service trusts all connecting proxy IPs:
+      # free services cannot receive private-network traffic. Reassess this
+      # boundary before adding private ingress or moving to a paid plan.
+      # See docs/agent-artifacts/devops/2026-10-05-render-proxy-infra-note.md.
+      - key: FORWARDED_ALLOW_IPS
+        value: "*"
+
       # Everything below is a reference only: `sync: false` means
       # Render will prompt for a real value in its dashboard on first
       # deploy and store it there, not in this file or git history.

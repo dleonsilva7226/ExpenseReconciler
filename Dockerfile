@@ -38,4 +38,6 @@ EXPOSE 8000
 # No migration step here: app/main.py's `lifespan` already runs
 # `CREATE EXTENSION IF NOT EXISTS pgcrypto` + `Base.metadata.create_all`
 # at startup (see app/main.py's own comment on why — no Alembic yet).
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
+# Render supplies FORWARDED_ALLOW_IPS in render.yaml for its TLS ingress.
+# Without that override, Uvicorn keeps its default loopback-only proxy trust.
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --proxy-headers"]

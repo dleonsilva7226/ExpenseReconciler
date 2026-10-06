@@ -1,66 +1,51 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>Link a Bank Account</title>
-    <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
-    <style>
-      body { font-family: system-ui, sans-serif; max-width: 32rem; margin: 3rem auto; padding: 0 1rem; }
-      button { font-size: 1rem; padding: 0.6rem 1.2rem; cursor: pointer; }
-    </style>
-  </head>
-  <body>
-    <h1>Link a Bank Account</h1>
-    <button id="link-button">Link a bank account</button>
-    <p id="status"></p>
-
-    <script>
-      const statusEl = document.getElementById("status");
-
-      async function startLink() {
-        statusEl.textContent = "Requesting link token...";
-        const tokenResp = await fetch("/link-account/token", { method: "POST" });
-        if (!tokenResp.ok) {
-          statusEl.textContent = "Failed to get a link token.";
-          return;
-        }
-        const { link_token } = await tokenResp.json();
-
-        const handler = Plaid.create({
-          token: link_token,
-          onSuccess: async (public_token, metadata) => {
-            statusEl.textContent = "Linking account...";
-            const accounts = (metadata.accounts || []).map((a) => ({
-              id: a.id,
-              name: a.name,
-              mask: a.mask,
-              type: a.type,
-              subtype: a.subtype,
-            }));
-            const callbackResp = await fetch("/link-account/callback", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                public_token,
-                institution_name: metadata.institution ? metadata.institution.name : "",
-                accounts,
-              }),
-            });
-            statusEl.textContent = callbackResp.ok
-              ? "Account linked successfully."
-              : "Linking failed — check server logs.";
-          },
-          onExit: (err) => {
-            if (err) {
-              statusEl.textContent = "Link exited with an error.";
-            }
-          },
-        });
-
-        handler.open();
-      }
-
-      document.getElementById("link-button").addEventListener("click", startLink);
-    </script>
-  </body>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Connect your bank · Jarvis</title>
+  <link rel="stylesheet" href="/link-account/assets/link_account.css">
+  <script src="/link-account/assets/link_account.js" defer></script>
+</head>
+<body>
+  <main class="card">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">J</span> JARVIS <span class="brand-note">Your finance assistant</span></div>
+    <h1>Connect your bank<br>to Jarvis</h1>
+    <p class="intro">Verify access, then securely connect your bank through Plaid.</p>
+    <ol class="steps" aria-label="Connection steps">
+      <li id="step-verify" aria-current="step"><span>1</span> Verify</li>
+      <li id="step-connect"><span>2</span> Connect</li>
+      <li id="step-success"><span>3</span> Done</li>
+    </ol>
+    <p id="status" class="status" role="status" aria-live="polite">Checking your verification…</p>
+    <section id="loading-panel"><p class="muted">Just a moment while we get things ready.</p><button id="retry-button" hidden>Try again</button></section>
+    <section id="verify-panel" hidden aria-labelledby="verify-heading">
+      <h2 id="verify-heading" tabindex="-1">Verify your access</h2>
+      <p class="muted">Use your Jarvis access details here. You'll enter your bank credentials securely in Plaid in the next step.</p>
+      <form id="verify-form">
+        <label for="username">Username</label>
+        <input id="username" name="username" autocomplete="username" maxlength="256" required>
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" maxlength="1024" required>
+        <button id="continue-button" type="submit">Continue <span aria-hidden="true">→</span></button>
+      </form>
+    </section>
+    <section id="connect-panel" hidden aria-labelledby="connect-heading">
+      <h2 id="connect-heading" tabindex="-1">You're ready to connect</h2>
+      <p class="muted">Choose your bank in Plaid and follow the prompts. Jarvis never sees your bank login details.</p>
+      <button id="connect-button">Connect bank account <span aria-hidden="true">→</span></button>
+      <button class="secondary signout-button">Sign out</button>
+    </section>
+    <section id="success-panel" hidden aria-labelledby="success-heading">
+      <div class="success-mark" aria-hidden="true">✓</div>
+      <h2 id="success-heading" tabindex="-1">Your account is connected</h2>
+      <p class="muted">Return to Telegram to ask Jarvis about your finances.</p>
+      <button id="another-button">Connect another account</button>
+      <button class="secondary signout-button">Sign out</button>
+    </section>
+    <button id="reverify-button" class="secondary" hidden>Verify again</button>
+    <noscript><p>JavaScript is needed for secure bank connection. Enable it in your browser, then reload this page.</p></noscript>
+    <footer>Secure bank connection, powered by Plaid</footer>
+  </main>
+</body>
 </html>
